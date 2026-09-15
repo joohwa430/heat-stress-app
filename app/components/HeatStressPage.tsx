@@ -92,10 +92,11 @@ async function geminiVision(
     throw new Error(e.error?.message || `Gemini API 오류 (${res.status})`);
   }
   const data = await res.json();
-  const text: string = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
-  const cleaned = text.replace(/```json|```/g, '').trim();
-  const m = cleaned.match(/\{[\s\S]*?\}/);
-  if (!m) throw new Error('온습도 값을 인식하지 못했습니다.');
+const text: string = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
+console.log('Gemini 원본 응답:', text);
+const cleaned = text.replace(/```json|```/g, '').trim();
+const m = cleaned.match(/\{[\s\S]*?\}/);
+if (!m) throw new Error(`인식 실패. 응답: ${text.slice(0, 100)}`); // ← 응답 내용 에러에 표시
   const p = JSON.parse(m[0]);
   const t = Number(p.temperature), h = Number(p.humidity);
   if (isNaN(t) || isNaN(h)) throw new Error('숫자 변환 실패 — 값을 직접 입력해주세요.');
