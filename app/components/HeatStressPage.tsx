@@ -93,16 +93,26 @@ async function geminiVision(
   }
   const data = await res.json();
 const text: string = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
-console.log('Gemini 원본 응답:', text);
-const cleaned = text.replace(/```json|```/g, '').trim();
 
-// { } 또는 [ ] 어떤 형식이든 temperature, humidity 값 직접 추출
-const tempMatch = cleaned.match(/"temperature"\s*:\s*(-?\d+\.?\d*)/);
-const humMatch  = cleaned.match(/"humidity"\s*:\s*(-?\d+\.?\d*)/);
-if (!tempMatch || !humMatch) throw new Error(`인식 실패. 응답: ${text.slice(0, 100)}`);
+// 마크다운 코드블록 완전 제거
+let cleaned = text
+  .replace(/```json/gi, '')
+  .replace(/```/g, '')
+  .trim();
+
+console.log('Gemini 정제 응답:', cleaned);
+
+// 따옴표 있든 없든, 문자열이든 숫자든 모두 처리
+const tempMatch = cleaned.match(/"?temperature"?\s*:\s*"?(-?\d+\.?\d*)"?/i);
+const humMatch  = cleaned.match(/"?humidity"?\s*:\s*"?(-?\d+\.?\d*)"?/i);
+
+if (!tempMatch || !humMatch) {
+  throw new Error(`인식 실패. 정제응답: ${cleaned.slice(0, 150)}`);
+}
 const t = Number(tempMatch[1]), h = Number(humMatch[1]);
 if (isNaN(t) || isNaN(h)) throw new Error('숫자 변환 실패 — 값을 직접 입력해주세요.');
 return { temp: t, hum: h };
+
 }
 
 
