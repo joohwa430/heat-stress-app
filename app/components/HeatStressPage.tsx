@@ -352,46 +352,7 @@ export default function HeatStressPage() {
                 <div style={{ borderTop: `1px solid ${curLv.border}`, paddingTop: '10px', fontSize: '11px', color: '#6b7280' }}>기온 {curT}°C · 습도 {curH}% · 기상청 Rothfusz 열지수 공식</div>
               </div>
             )}
-{curHI !== null && !analyzing && (
-              <div style={{ border: '1px solid #d1d5db', borderRadius: '10px', overflow: 'hidden', marginBottom: '16px', fontSize: '12px' }}>
-                <div style={{ background: '#f3f4f6', textAlign: 'center', fontWeight: '700', padding: '8px', borderBottom: '1px solid #d1d5db', fontSize: '13px' }}>조치사항</div>
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr' }}>
-                  {/* 헤더 */}
-                  <div style={{ background: curHI < 31 ? '#bbf7d0' : '#f0fdf4', padding: '8px', textAlign: 'center', fontWeight: '700', borderBottom: '1px solid #d1d5db', borderRight: '1px solid #d1d5db', color: '#166534' }}>
-                    체감온도 31℃ 미만<br/><span style={{ fontWeight: '400', fontSize: '11px' }}>기본관리</span>
-                  </div>
-                  <div style={{ background: (curHI >= 31 && curHI < 33) ? '#fef08a' : '#fefce8', padding: '8px', textAlign: 'center', fontWeight: '700', borderBottom: '1px solid #d1d5db', borderRight: '1px solid #d1d5db', color: '#854d0e' }}>
-                    31℃ 이상 ~ 33℃ 미만
-                  </div>
-                  <div style={{ background: curHI >= 33 ? '#fecaca' : '#fef2f2', padding: '8px', textAlign: 'center', fontWeight: '700', borderBottom: '1px solid #d1d5db', color: '#991b1b' }}>
-                    33℃ 이상 시 조치사항
-                  </div>
 
-                  {/* 내용 */}
-                  <div style={{ padding: '10px', borderRight: '1px solid #d1d5db', verticalAlign: 'top' }}>
-                    <label style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer' }}>
-                      <input type="checkbox" /> 충분한 물, 식염포도당 지급
-                    </label>
-                  </div>
-                  <div style={{ padding: '10px', borderRight: '1px solid #d1d5db' }}>
-                    {['냉방, 통풍을 위한 온습도 조절장치 설치 및 가동 조치', '작업시간대 조정', '적절한 휴식 부여'].map((a, i) => (
-                      <label key={i} style={{ display: 'flex', alignItems: 'flex-start', gap: '6px', marginBottom: '6px', cursor: 'pointer' }}>
-                        <input type="checkbox" style={{ marginTop: '2px' }} /> {a}
-                      </label>
-                    ))}
-                  </div>
-                  <div style={{ padding: '10px' }}>
-                    <div style={{ marginBottom: '6px', color: '#991b1b', fontWeight: '600' }}>매 2시간 이내 20분 이상 휴식</div>
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '4px', fontSize: '11px' }}>
-                      <div style={{ color: '#6b7280' }}>휴식 시작시간</div>
-                      <div style={{ color: '#6b7280' }}>휴식 종료시간</div>
-                      <input type="text" placeholder="10:00" style={{ border: '1px solid #d1d5db', borderRadius: '4px', padding: '4px 6px', fontSize: '11px', outline: 'none' }} />
-                      <input type="text" placeholder="10:20" style={{ border: '1px solid #d1d5db', borderRadius: '4px', padding: '4px 6px', fontSize: '11px', outline: 'none' }} />
-                    </div>
-                  </div>
-                </div>
-              </div>
-            )}
             {!extracted && !analyzing && (
               <div style={{ border: '1px solid #e5e7eb', borderRadius: '10px', padding: '20px', background: '#f9fafb', marginBottom: '16px' }}>
                 <div style={{ fontSize: '13px', fontWeight: '600', color: '#374151', marginBottom: '12px' }}>사용 방법</div>
@@ -404,6 +365,85 @@ export default function HeatStressPage() {
                     </div>
                   </div>
                 ))}
+              </div>
+            )}
+            {curHI !== null && !analyzing && (
+              <div style={{ border: '1px solid #d1d5db', borderRadius: '10px', overflow: 'hidden', marginBottom: '16px' }}>
+                <div style={{ background: '#374151', color: '#fff', textAlign: 'center', fontWeight: '700', padding: '10px', fontSize: '13px' }}>조치사항</div>
+
+                {/* 31℃ 미만 */}
+                {curHI < 31 && (
+                  <div>
+                    <div style={{ background: '#bbf7d0', color: '#166534', padding: '10px 16px', fontWeight: '700', fontSize: '13px', borderBottom: '1px solid #d1d5db' }}>
+                      체감온도 31℃ 미만 — 기본관리
+                    </div>
+                    <div style={{ padding: '16px', display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                      <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', fontSize: '13px', color: '#374151' }}>
+                        <input type="checkbox" style={{ width: '16px', height: '16px', accentColor: '#16a34a' }} />
+                        충분한 물, 식염포도당 지급
+                      </label>
+                    </div>
+                  </div>
+                )}
+
+                {/* 31℃ 이상 ~ 33℃ 미만 */}
+                {curHI >= 31 && curHI < 33 && (
+                  <div>
+                    <div style={{ background: '#fde68a', color: '#92400e', padding: '10px 16px', fontWeight: '700', fontSize: '13px', borderBottom: '1px solid #d1d5db' }}>
+                      체감온도 31℃ 이상 ~ 33℃ 미만 시 조치사항
+                    </div>
+                    <div style={{ padding: '16px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                      <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', fontSize: '13px', color: '#374151' }}>
+                        <input type="checkbox" style={{ width: '16px', height: '16px', flexShrink: 0, accentColor: '#b45309' }} />
+                        냉방, 통풍을 위한 온습도 조절장치 설치 및 가동 조치
+                      </label>
+                      <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', fontSize: '13px', color: '#374151' }}>
+                        <input type="checkbox" style={{ width: '16px', height: '16px', flexShrink: 0, accentColor: '#b45309' }} />
+                        작업시간대 조정
+                      </label>
+                      <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', fontSize: '13px', color: '#374151' }}>
+                        <input type="checkbox" style={{ width: '16px', height: '16px', flexShrink: 0, accentColor: '#b45309' }} />
+                        적절한 휴식 부여
+                      </label>
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginTop: '4px' }}>
+                        <div>
+                          <label style={{ fontSize: '11px', color: '#6b7280', display: 'block', marginBottom: '4px' }}>휴식 시작시간</label>
+                          <input type="time" style={{ width: '100%', padding: '7px 10px', border: '1px solid #d1d5db', borderRadius: '6px', fontSize: '13px', boxSizing: 'border-box' }} />
+                        </div>
+                        <div>
+                          <label style={{ fontSize: '11px', color: '#6b7280', display: 'block', marginBottom: '4px' }}>휴식 종료시간</label>
+                          <input type="time" style={{ width: '100%', padding: '7px 10px', border: '1px solid #d1d5db', borderRadius: '6px', fontSize: '13px', boxSizing: 'border-box' }} />
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* 33℃ 이상 */}
+                {curHI >= 33 && (
+                  <div>
+                    <div style={{ background: '#fca5a5', color: '#991b1b', padding: '10px 16px', fontWeight: '700', fontSize: '13px', borderBottom: '1px solid #d1d5db' }}>
+                      체감온도 33℃ 이상 시 조치사항
+                    </div>
+                    <div style={{ padding: '16px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                      <div style={{ fontSize: '13px', color: '#991b1b', fontWeight: '600' }}>매 2시간 이내 20분 이상 휴식시간 부여</div>
+                      <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', fontSize: '13px', color: '#374151' }}>
+                        <input type="checkbox" style={{ width: '16px', height: '16px', accentColor: '#dc2626' }} />
+                        휴식시간 부여 완료
+                      </label>
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                        <div>
+                          <label style={{ fontSize: '11px', color: '#6b7280', display: 'block', marginBottom: '4px' }}>휴식 시작시간</label>
+                          <input type="time" style={{ width: '100%', padding: '7px 10px', border: '1px solid #d1d5db', borderRadius: '6px', fontSize: '13px', boxSizing: 'border-box' }} />
+                        </div>
+                        <div>
+                          <label style={{ fontSize: '11px', color: '#6b7280', display: 'block', marginBottom: '4px' }}>휴식 종료시간</label>
+                          <input type="time" style={{ width: '100%', padding: '7px 10px', border: '1px solid #d1d5db', borderRadius: '6px', fontSize: '13px', boxSizing: 'border-box' }} />
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )}
               </div>
             )}
 

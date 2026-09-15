@@ -138,7 +138,25 @@ const [loaded, setLoaded]   = useState(false);
   const [showMoreMonths, setShowMoreMonths]     = useState<Set<string>>(new Set());
   const [selectedConsultId, setSelectedConsultId] = useState<number | null>(null);
 const [selectedConsultSa, setSelectedConsultSa] = useState<string>('');
+const [now, setNow] = useState<Date | null>(null);
 
+useEffect(() => {
+  setNow(new Date());
+  const timer = setInterval(() => setNow(new Date()), 1000); // 1초마다 갱신
+  return () => clearInterval(timer);
+}, []);
+
+const formatDateTime = (date: Date) => {
+  const days = ['일', '월', '화', '수', '목', '금', '토'];
+  const y   = date.getFullYear();
+  const m   = String(date.getMonth() + 1).padStart(2, '0');
+  const d   = String(date.getDate()).padStart(2, '0');
+  const day = days[date.getDay()];
+  const h   = String(date.getHours()).padStart(2, '0');
+  const min = String(date.getMinutes()).padStart(2, '0');
+  const sec = String(date.getSeconds()).padStart(2, '0');
+  return `${y}.${m}.${d} (${day}) ${h}:${min}:${sec}`;
+};
   const toggleShowMore = (month: string) => {
     setShowMoreMonths(prev => {
       const next = new Set(prev);
@@ -201,7 +219,7 @@ const openConsultFromBogunsil = (payload: { consultId: number; 사번: string })
     { title: '근골격계 유해요인조사표', badge: '웹앱', color: '#0369a1', bg: '#e0f2fe', desc: '부담작업 공정별 유해요인조사 입력. 3년 주기 정기조사·수시조사에 사용합니다.' },
    { title: '근골격계 증상조사표', badge: '웹앱', color: '#0369a1', bg: '#e0f2fe', desc: '근로자 자각증상 조사 응답 원본. 유해요인조사와 짝으로 실시하고 부서별로 집계합니다.', action: 'musculoskeletal' },
 
-    { title: '직무스트레스 평가', badge: '웹앱', color: '#0369a1', bg: '#e0f2fe', desc: 'KOSS 기반 사내 평가. 11월에 실시하고 결과는 부서 단위 집단 평균으로 개선과제를 도출합니다.' },
+    { title: '뇌심혈관질환 발병위험도평가', badge: '웹앱', color: '#0369a1', bg: '#e0f2fe', desc: 'KOSAH guide' },
     { title: '온열질환 예방 자율점검표', badge: '웹앱 · 6~9월', color: '#0369a1', bg: '#e0f2fe', desc: '체감온도 31°C 이상 폭염 작업 시 조치 이행 여부 점검. 6월~9월 상시 운영합니다.', action: 'heat-stress' },
   ];
 
@@ -716,7 +734,9 @@ if (activeMenu === '온열질환 체감온도') return <HeatStressPage />;
           <div style={{flex:1,display:'flex',alignItems:'center',gap:'8px',background:'#f9fafb',border:'1px solid #e5e7eb',borderRadius:'8px',padding:'10px 16px'}}>
             <input placeholder="MSDS, 특수건강진단, 부담작업, 응급처치... 검색" style={{border:'none',background:'transparent',outline:'none',fontSize:'14px',color:'#374151',flex:1}} />
           </div>
-          <div style={{fontSize:'13px',color:'#6b7280',whiteSpace:'nowrap'}}>2026.09.03 (목)</div>
+          <div style={{fontSize:'13px',color:'#6b7280',whiteSpace:'nowrap'}}>
+  {now ? formatDateTime(now) : ''}
+</div>
         </div>
         {renderContent()}
       </main>
