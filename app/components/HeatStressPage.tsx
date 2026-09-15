@@ -66,11 +66,11 @@ async function geminiVision(
   const body = {
     contents: [{ parts: [
       {
-        text: `이 디지털 온습도계 이미지에서 숫자를 읽어주세요.
-아래 JSON 형식으로만 응답하세요. 다른 텍스트 절대 금지:
-{"temperature": 숫자, "humidity": 숫자}
-온도 범위: -20~60, 습도 범위: 0~100`,
-      },
+  text: `Look at this thermometer display image.
+Return ONLY a JSON object with no explanation, no markdown, no code blocks.
+Example: {"temperature": 28.5, "humidity": 65}
+Extract the temperature and humidity numbers you see.`,
+},
       { inline_data: { mime_type: mime, data: b64 } },
     ]}],
     generationConfig: { temperature: 0, maxOutputTokens: 100 },
@@ -86,6 +86,7 @@ async function geminiVision(
   }
   const data = await res.json();
   const text: string = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
+  console.log('Gemini 응답:', text);
   const cleaned = text.replace(/```json|```/g, '').trim();
   const m = cleaned.match(/\{[\s\S]*?\}/);
   if (!m) throw new Error('온습도 값을 인식하지 못했습니다.');
