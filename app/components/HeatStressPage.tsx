@@ -66,10 +66,12 @@ async function geminiVision(
   const body = {
     contents: [{ parts: [
       {
-  text: `Look at this thermometer display image.
-Return ONLY a JSON object with no explanation, no markdown, no code blocks.
-Example: {"temperature": 28.5, "humidity": 65}
-Extract the temperature and humidity numbers you see.`,
+  {
+  text: `이 디지털 온습도계 이미지에서 숫자를 읽어주세요.
+- 위쪽 큰 숫자: 온도(°C)
+- 아래쪽 숫자 중 %가 붙은 것: 습도
+반드시 JSON 형식으로만 답하세요:
+{"temperature": 숫자, "humidity": 숫자}`,
 },
       { inline_data: { mime_type: mime, data: b64 } },
     ]}],
