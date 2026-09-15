@@ -73,7 +73,7 @@ async function geminiVision(
   b64: string, mime: string, key: string
 ): Promise<{ temp: number; hum: number }> {
   const url =
-    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${key}`;
+    `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent?key=${key}`;
   const body = {
     contents: [{ parts: [
       {
@@ -116,8 +116,7 @@ async function geminiVision(
 ═══════════════════════════════════════════════ */
 export default function HeatStressPage() {
   const [tab, setTab]             = useState<'measure' | 'history'>('measure');
-  const [apiKey, setApiKey]       = useState('');
-  const [showKey, setShowKey]     = useState(false);
+  const apiKey = process.env.NEXT_PUBLIC_GEMINI_API_KEY ?? '';
   const [preview, setPreview]     = useState<string | null>(null);
   const [analyzing, setAnalyzing] = useState(false);
   const [extracted, setExtracted] = useState<{ temp: number; hum: number } | null>(null);
@@ -308,41 +307,11 @@ export default function HeatStressPage() {
             체감온도 측정 기록
           </h2>
         </div>
-        <button
-          onClick={() => setShowKey(v => !v)}
-          style={{ fontSize: '12px', padding: '5px 12px', border: '1px solid #e5e7eb', borderRadius: '6px', background: '#f9fafb', color: '#6b7280', cursor: 'pointer' }}
-        >
-          ⚙ API 키 {showKey ? '닫기' : '설정'}
-        </button>
       </div>
       <p style={{ fontSize: '13px', color: '#6b7280', marginBottom: '16px', lineHeight: 1.5 }}>
         온습도계 사진 촬영 → Gemini AI 자동 인식 → 체감온도 산출 → GPS 위치 자동 등록
       </p>
 
-      {/* ── API Key Panel ── */}
-      {showKey && (
-        <div style={{ border: '1px solid #e5e7eb', borderRadius: '8px', padding: '16px', marginBottom: '16px', background: '#f9fafb' }}>
-          <div style={{ fontSize: '13px', fontWeight: '600', color: '#374151', marginBottom: '6px' }}>Gemini API Key 설정</div>
-          <div style={{ fontSize: '12px', color: '#6b7280', marginBottom: '10px' }}>
-            <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noreferrer"
-              style={{ color: '#0284c7' }}>Google AI Studio</a>에서 무료 발급 가능 ·
-            브라우저 로컬에만 저장 (서버 전송 없음)
-          </div>
-          <div style={{ display: 'flex', gap: '8px' }}>
-            <input
-              type="password" value={apiKey} onChange={e => setApiKey(e.target.value)}
-              placeholder="AIzaSy..."
-              style={{ flex: 1, padding: '8px 12px', border: '1px solid #d1d5db', borderRadius: '6px', fontSize: '13px', outline: 'none' }}
-            />
-            <button
-              onClick={() => { localStorage.setItem(KEY_KEY, apiKey); setShowKey(false); }}
-              style={{ padding: '8px 18px', background: '#0284c7', color: '#fff', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '13px', fontWeight: '600' }}
-            >
-              저장
-            </button>
-          </div>
-        </div>
-      )}
 
       {/* ── Tabs ── */}
       <div style={{ display: 'flex', gap: '4px', borderBottom: '1px solid #e5e7eb', marginBottom: '24px' }}>
