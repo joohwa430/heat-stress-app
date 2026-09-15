@@ -66,14 +66,19 @@ async function geminiVision(
   const body = {
     contents: [{ parts: [
       {
-  {
-  text: `이 디지털 온습도계 이미지에서 숫자를 읽어주세요.
+        text: `이 디지털 온습도계 이미지에서 숫자를 읽어주세요.
 - 위쪽 큰 숫자: 온도(°C)
 - 아래쪽 숫자 중 %가 붙은 것: 습도
-반드시 JSON 형식으로만 답하세요:
-{"temperature": 숫자, "humidity": 숫자}`,
-},
-      { inline_data: { mime_type: mime, data: b64 } },
+반드시 JSON 형식으로만 답하세요. 다른 텍스트 절대 금지:
+{"temperature": 숫자, "humidity": 숫자}
+온도 범위: -20~60, 습도 범위: 0~100`,
+      },
+      {
+        inline_data: {
+          mime_type: mime,
+          data: b64,
+        }
+      },
     ]}],
     generationConfig: { temperature: 0, maxOutputTokens: 100 },
   };
@@ -88,7 +93,6 @@ async function geminiVision(
   }
   const data = await res.json();
   const text: string = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
-  console.log('Gemini 응답:', text);
   const cleaned = text.replace(/```json|```/g, '').trim();
   const m = cleaned.match(/\{[\s\S]*?\}/);
   if (!m) throw new Error('온습도 값을 인식하지 못했습니다.');
@@ -97,6 +101,7 @@ async function geminiVision(
   if (isNaN(t) || isNaN(h)) throw new Error('숫자 변환 실패 — 값을 직접 입력해주세요.');
   return { temp: t, hum: h };
 }
+
 
 export default function HeatStressPage() {
   const [tab, setTab]             = useState<'measure' | 'history'>('measure');
