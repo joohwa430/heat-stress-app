@@ -95,12 +95,14 @@ async function geminiVision(
 const text: string = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
 console.log('Gemini 원본 응답:', text);
 const cleaned = text.replace(/```json|```/g, '').trim();
-const m = cleaned.match(/\{[\s\S]*?\}/);
-if (!m) throw new Error(`인식 실패. 응답: ${text.slice(0, 100)}`); // ← 응답 내용 에러에 표시
-  const p = JSON.parse(m[0]);
-  const t = Number(p.temperature), h = Number(p.humidity);
-  if (isNaN(t) || isNaN(h)) throw new Error('숫자 변환 실패 — 값을 직접 입력해주세요.');
-  return { temp: t, hum: h };
+
+// { } 또는 [ ] 어떤 형식이든 temperature, humidity 값 직접 추출
+const tempMatch = cleaned.match(/"temperature"\s*:\s*(-?\d+\.?\d*)/);
+const humMatch  = cleaned.match(/"humidity"\s*:\s*(-?\d+\.?\d*)/);
+if (!tempMatch || !humMatch) throw new Error(`인식 실패. 응답: ${text.slice(0, 100)}`);
+const t = Number(tempMatch[1]), h = Number(humMatch[1]);
+if (isNaN(t) || isNaN(h)) throw new Error('숫자 변환 실패 — 값을 직접 입력해주세요.');
+return { temp: t, hum: h };
 }
 
 
