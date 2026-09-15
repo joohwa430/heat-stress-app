@@ -80,7 +80,7 @@ async function geminiVision(
         }
       },
     ]}],
-    generationConfig: { temperature: 0, maxOutputTokens: 100 },
+    generationConfig: { temperature: 0, maxOutputTokens: 256 },
   };
   const res = await fetch(url, {
     method: 'POST',
@@ -92,28 +92,33 @@ async function geminiVision(
     throw new Error(e.error?.message || `Gemini API 오류 (${res.status})`);
   }
   const data = await res.json();
-const text: string = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
+  const text: string = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
+  console.log('Gemini 전체 응답:', text);
 
-// 마크다운 코드블록 완전 제거
-let cleaned = text
-  .replace(/```json/gi, '')
-  .replace(/```/g, '')
-  .trim();
+  // 마크다운 제거
+  const cleaned = text.replace(/```json/gi, '').replace(/```/g, '').trim();
 
-console.log('Gemini 정제 응답:', cleaned);
+  // 방법1: JSON 파싱
+  try {
+    const jsonMatch = cleaned.match(/\{[\s\S]*?\}/);
+    if (jsonMatch) {
+      const p = JSON.parse(jsonMatch[0]);
+      const t = Number(p.temperature), h = Number(p.humidity);
+      if (!isNaN(t) && !isNaN(h)) return { temp: t, hum: h };
+    }
+  } catch {}
 
-// 따옴표 있든 없든, 문자열이든 숫자든 모두 처리
-const tempMatch = cleaned.match(/"?temperature"?\s*:\s*"?(-?\d+\.?\d*)"?/i);
-const humMatch  = cleaned.match(/"?humidity"?\s*:\s*"?(-?\d+\.?\d*)"?/i);
+  // 방법2: 정규식으로 숫자 직접 추출
+  const tempMatch = cleaned.match(/"temperature"\s*:\s*(-?\d+\.?\d*)/i);
+  const humMatch  = cleaned.match(/"humidity"\s*:\s*(-?\d+\.?\d*)/i);
+  if (tempMatch && humMatch) {
+    const t = Number(tempMatch[1]), h = Number(humMatch[1]);
+    if (!isNaN(t) && !isNaN(h)) return { temp: t, hum: h };
+  }
 
-if (!tempMatch || !humMatch) {
-  throw new Error(`인식 실패. 정제응답: ${cleaned.slice(0, 150)}`);
+  throw new Error('온습도 값을 인식하지 못했습니다. 값을 직접 입력해주세요.');
 }
-const t = Number(tempMatch[1]), h = Number(humMatch[1]);
-if (isNaN(t) || isNaN(h)) throw new Error('숫자 변환 실패 — 값을 직접 입력해주세요.');
-return { temp: t, hum: h };
 
-}
 
 
 export default function HeatStressPage() {
