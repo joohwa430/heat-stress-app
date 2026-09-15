@@ -1,5 +1,10 @@
 'use client';
 import { useState, useRef, useEffect } from 'react';
+import { db } from '@/lib/firebase';
+import {
+  collection, addDoc, deleteDoc, doc,
+  onSnapshot, orderBy, query, Timestamp,
+} from 'firebase/firestore';
 
 /* ═══════════════════════════════════════════════
    Types
@@ -18,12 +23,11 @@ interface HeatRecord {
   lng?: number;
   address?: string;
   memo?: string;
+  createdAt?: Timestamp;
 }
 
 /* ═══════════════════════════════════════════════
    체감온도(열지수) 계산 — 기상청 Rothfusz 공식
-   · T < 27°C : Steadman 간이공식
-   · T ≥ 27°C : NOAA/기상청 다항식
 ═══════════════════════════════════════════════ */
 function calcHeatIndex(T: number, RH: number): number {
   if (T < 27) {
@@ -51,16 +55,7 @@ function getLevel(hi: number): LevelInfo {
   return              { level:'쾌적',      color:'#16a34a', bg:'#f0fdf4', border:'#86efac', action:'정상 작업 가능' };
 }
 
-/* ═══════════════════════════════════════════════
-   LocalStorage helpers
-═══════════════════════════════════════════════ */
-const REC_KEY = 'hb_heat_records';
 const KEY_KEY = 'hb_gemini_key';
-
-function loadRec(): HeatRecord[] {
-  try { return JSON.parse(localStorage.getItem(REC_KEY) || '[]'); } catch { return []; }
-}
-function saveRec(r: HeatRecord[]) { localStorage.setItem(REC_KEY, JSON.stringify(r)); }
 
 /* ═══════════════════════════════════════════════
    Gemini Vision API 호출
@@ -78,24 +73,24 @@ async function geminiVision(
   b64: string, mime: string, key: string
 ): Promise<{ temp: number; hum: number }> {
   const url =
-    `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent?key=${key}`
+    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${key}`;
   const body = {
-  contents: [{ parts: [
-    {
-      text: `이 디지털 온습도계 이미지에서 숫자를 읽어주세요.
+    contents: [{ parts: [
+      {
+        text: `이 디지털 온습도계 이미지에서 숫자를 읽어주세요.
 아래 JSON 형식으로만 응답하세요. 다른 텍스트 절대 금지:
 {"temperature": 숫자, "humidity": 숫자}
 온도 범위: -20~60, 습도 범위: 0~100`,
-    },
-    {
-      inline_data: {        // ← camelCase → snake_case
-        mime_type: mime,    // ← camelCase → snake_case
-        data: b64,
-      }
-    },
-  ]}],
-  generationConfig: { temperature: 0, maxOutputTokens: 100 },
-};
+      },
+      {
+        inline_data: {
+          mime_type: mime,
+          data: b64,
+        }
+      },
+    ]}],
+    generationConfig: { temperature: 0, maxOutputTokens: 100 },
+  };
   const res = await fetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -108,9 +103,9 @@ async function geminiVision(
   const data = await res.json();
   const text: string = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
   const cleaned = text.replace(/```json|```/g, '').trim();
-const m = cleaned.match(/\{[\s\S]*?\}/);
-if (!m) throw new Error('온습도 값을 인식하지 못했습니다.');
-const p = JSON.parse(m[0]);
+  const m = cleaned.match(/\{[\s\S]*?\}/);
+  if (!m) throw new Error('온습도 값을 인식하지 못했습니다.');
+  const p = JSON.parse(m[0]);
   const t = Number(p.temperature), h = Number(p.humidity);
   if (isNaN(t) || isNaN(h)) throw new Error('숫자 변환 실패 — 값을 직접 입력해주세요.');
   return { temp: t, hum: h };
@@ -133,14 +128,29 @@ export default function HeatStressPage() {
   const [locName, setLocName]     = useState('');
   const [memo, setMemo]           = useState('');
   const [records, setRecords]     = useState<HeatRecord[]>([]);
+  const [loading, setLoading]     = useState(true);
   const [err, setErr]             = useState('');
   const [saved, setSaved]         = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
 
+  /* ── Firestore 실시간 구독 ── */
   useEffect(() => {
-    setRecords(loadRec());
     const k = localStorage.getItem(KEY_KEY);
     if (k) setApiKey(k);
+
+    const q = query(collection(db, 'heatRecords'), orderBy('createdAt', 'desc'));
+    const unsub = onSnapshot(q, (snapshot) => {
+      const docs = snapshot.docs.map(d => ({
+        id: d.id,
+        ...d.data(),
+      })) as HeatRecord[];
+      setRecords(docs);
+      setLoading(false);
+    }, () => {
+      setLoading(false);
+    });
+
+    return () => unsub();
   }, []);
 
   /* ── 사진 선택 및 AI 인식 ── */
@@ -149,7 +159,6 @@ export default function HeatStressPage() {
     if (!file) return;
     setErr(''); setExtracted(null); setSaved(false);
 
-    // 미리보기
     const dr = new FileReader();
     dr.onload = ev => setPreview(ev.target?.result as string);
     dr.readAsDataURL(file);
@@ -185,7 +194,6 @@ export default function HeatStressPage() {
         const { latitude: lat, longitude: lng } = pos.coords;
         setGps({ lat, lng });
         setGpsState('ok');
-        // Nominatim 역지오코딩 (무료, HTTPS 필요)
         try {
           const r = await fetch(
             `https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lng}&format=json&accept-language=ko`,
@@ -205,8 +213,8 @@ export default function HeatStressPage() {
     );
   };
 
-  /* ── 저장 ── */
-  const handleSave = () => {
+  /* ── 저장 (Firestore) ── */
+  const handleSave = async () => {
     const T = parseFloat(tempEdit), H = parseFloat(humEdit);
     if (isNaN(T) || isNaN(H) || H < 0 || H > 100) {
       setErr('온도·습도 값을 올바르게 입력해주세요.');
@@ -215,8 +223,8 @@ export default function HeatStressPage() {
     const hi = calcHeatIndex(T, H);
     const lv = getLevel(hi);
     const now = new Date();
-    const rec: HeatRecord = {
-      id:       now.getTime().toString(),
+
+    const rec = {
       date:     now.toLocaleDateString('ko-KR', { year: 'numeric', month: '2-digit', day: '2-digit' })
                     .replace(/\. /g, '.').replace(/\.$/, ''),
       time:     now.toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' }),
@@ -225,29 +233,37 @@ export default function HeatStressPage() {
       level:    lv.level,
       color:    lv.color,
       location: locName || '미지정',
-      lat:      gps?.lat,
-      lng:      gps?.lng,
-      address:  gps?.address,
-      memo,
+      lat:      gps?.lat ?? null,
+      lng:      gps?.lng ?? null,
+      address:  gps?.address ?? null,
+      memo:     memo || null,
+      createdAt: Timestamp.now(),
     };
-    const updated = [rec, ...records];
-    setRecords(updated);
-    saveRec(updated);
-    setSaved(true);
-    setTimeout(() => {
-      setPreview(null); setExtracted(null);
-      setTempEdit(''); setHumEdit('');
-      setGps(null); setGpsState('idle');
-      setLocName(''); setMemo('');
-      setSaved(false); setErr('');
-      setTab('history');
-      if (fileRef.current) fileRef.current.value = '';
-    }, 1000);
+
+    try {
+      await addDoc(collection(db, 'heatRecords'), rec);
+      setSaved(true);
+      setTimeout(() => {
+        setPreview(null); setExtracted(null);
+        setTempEdit(''); setHumEdit('');
+        setGps(null); setGpsState('idle');
+        setLocName(''); setMemo('');
+        setSaved(false); setErr('');
+        setTab('history');
+        if (fileRef.current) fileRef.current.value = '';
+      }, 1000);
+    } catch (e: any) {
+      setErr('저장 실패: ' + e.message);
+    }
   };
 
-  const deleteRecord = (id: string) => {
-    const updated = records.filter(r => r.id !== id);
-    setRecords(updated); saveRec(updated);
+  /* ── 삭제 (Firestore) ── */
+  const deleteRecord = async (id: string) => {
+    try {
+      await deleteDoc(doc(db, 'heatRecords', id));
+    } catch (e: any) {
+      setErr('삭제 실패: ' + e.message);
+    }
   };
 
   const exportCSV = () => {
@@ -265,21 +281,19 @@ export default function HeatStressPage() {
     a.click();
   };
 
-  /* ── 현재 입력값으로 실시간 계산 ── */
   const curT  = parseFloat(tempEdit);
   const curH  = parseFloat(humEdit);
   const curHI = (!isNaN(curT) && !isNaN(curH) && curH >= 0 && curH <= 100)
     ? calcHeatIndex(curT, curH) : null;
   const curLv = curHI !== null ? getLevel(curHI) : null;
 
-  /* ── 이력 요약 ── */
   const todayStr  = new Date().toLocaleDateString('ko-KR', { year:'numeric', month:'2-digit', day:'2-digit' })
                       .replace(/\. /g, '.').replace(/\.$/, '');
   const todayRecs  = records.filter(r => r.date === todayStr);
   const dangerRecs = records.filter(r => r.level === '위험' || r.level === '매우위험');
 
   /* ═══════════════════════════════════════════
-     Render
+     Render (이하 UI는 기존과 동일)
   ═══════════════════════════════════════════ */
   return (
     <div style={{ padding: '28px 32px', fontFamily: 'Pretendard, -apple-system, sans-serif' }}>
@@ -355,10 +369,7 @@ export default function HeatStressPage() {
       ══════════════════════════════════════════ */}
       {tab === 'measure' && (
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '24px', maxWidth: '920px' }}>
-
-          {/* ── 좌측: 카메라 + GPS ── */}
           <div>
-            {/* 카메라 버튼 */}
             <input ref={fileRef} type="file" accept="image/*" capture="environment"
               onChange={handleFile} style={{ display: 'none' }} />
             <button
@@ -378,7 +389,6 @@ export default function HeatStressPage() {
               </div>
             </button>
 
-            {/* 이미지 미리보기 */}
             {preview && (
               <div style={{
                 position: 'relative', borderRadius: '10px', overflow: 'hidden',
@@ -400,7 +410,6 @@ export default function HeatStressPage() {
                       animation: 'heatSpin 0.8s linear infinite',
                     }} />
                     <div style={{ fontSize: '14px', fontWeight: '600', color: '#fff' }}>AI 인식 중...</div>
-                    <div style={{ fontSize: '12px', color: 'rgba(255,255,255,0.7)' }}>Gemini Vision으로 숫자를 읽고 있습니다</div>
                   </div>
                 )}
                 {extracted && !analyzing && (
@@ -413,11 +422,8 @@ export default function HeatStressPage() {
               </div>
             )}
 
-            {/* GPS 위치 */}
             <div style={{ border: '1px solid #e5e7eb', borderRadius: '10px', padding: '16px' }}>
-              <div style={{ fontSize: '13px', fontWeight: '600', color: '#374151', marginBottom: '10px' }}>
-                📍 GPS 위치 등록
-              </div>
+              <div style={{ fontSize: '13px', fontWeight: '600', color: '#374151', marginBottom: '10px' }}>📍 GPS 위치 등록</div>
               <button
                 onClick={handleGPS}
                 disabled={gpsState === 'loading'}
@@ -450,15 +456,10 @@ export default function HeatStressPage() {
                   fontSize: '13px', outline: 'none', boxSizing: 'border-box', color: '#374151',
                 }}
               />
-              <div style={{ fontSize: '11px', color: '#9ca3af', marginTop: '5px' }}>
-                GPS가 자동으로 채워주거나 직접 입력하세요
-              </div>
             </div>
           </div>
 
-          {/* ── 우측: 인식 결과 + 체감온도 ── */}
           <div>
-            {/* 인식된 값 (수정 가능) */}
             {(extracted || analyzing) && (
               <div style={{ border: '1px solid #e5e7eb', borderRadius: '10px', padding: '16px', marginBottom: '16px', background: '#fff' }}>
                 <div style={{ fontSize: '13px', fontWeight: '600', color: '#374151', marginBottom: '12px' }}>
@@ -471,12 +472,7 @@ export default function HeatStressPage() {
                     <input
                       type="number" step="0.1" value={tempEdit}
                       onChange={e => setTempEdit(e.target.value)}
-                      style={{
-                        width: '100%', padding: '12px 8px',
-                        border: '1px solid #d1d5db', borderRadius: '7px',
-                        fontSize: '22px', fontWeight: '700', textAlign: 'center',
-                        outline: 'none', boxSizing: 'border-box', color: '#111827',
-                      }}
+                      style={{ width: '100%', padding: '12px 8px', border: '1px solid #d1d5db', borderRadius: '7px', fontSize: '22px', fontWeight: '700', textAlign: 'center', outline: 'none', boxSizing: 'border-box', color: '#111827' }}
                     />
                   </div>
                   <div>
@@ -484,43 +480,25 @@ export default function HeatStressPage() {
                     <input
                       type="number" step="1" min="0" max="100" value={humEdit}
                       onChange={e => setHumEdit(e.target.value)}
-                      style={{
-                        width: '100%', padding: '12px 8px',
-                        border: '1px solid #d1d5db', borderRadius: '7px',
-                        fontSize: '22px', fontWeight: '700', textAlign: 'center',
-                        outline: 'none', boxSizing: 'border-box', color: '#111827',
-                      }}
+                      style={{ width: '100%', padding: '12px 8px', border: '1px solid #d1d5db', borderRadius: '7px', fontSize: '22px', fontWeight: '700', textAlign: 'center', outline: 'none', boxSizing: 'border-box', color: '#111827' }}
                     />
                   </div>
                 </div>
               </div>
             )}
 
-            {/* 체감온도 결과 카드 */}
             {curHI !== null && curLv && !analyzing && (
-              <div style={{
-                border: `1px solid ${curLv.border}`, borderRadius: '12px',
-                padding: '20px', marginBottom: '16px', background: curLv.bg,
-              }}>
-                <div style={{ fontSize: '12px', color: curLv.color, fontWeight: '600', marginBottom: '4px' }}>
-                  체감온도 (열지수)
-                </div>
-                <div style={{ fontSize: '48px', fontWeight: '800', color: curLv.color, lineHeight: 1.05, marginBottom: '10px' }}>
-                  {curHI}°C
-                </div>
-                <div style={{ display: 'inline-block', background: curLv.color, color: '#fff', padding: '4px 14px', borderRadius: '5px', fontSize: '14px', fontWeight: '700', marginBottom: '10px' }}>
-                  {curLv.level}
-                </div>
-                <div style={{ fontSize: '13px', color: curLv.color, fontWeight: '600', marginBottom: '12px' }}>
-                  → {curLv.action}
-                </div>
+              <div style={{ border: `1px solid ${curLv.border}`, borderRadius: '12px', padding: '20px', marginBottom: '16px', background: curLv.bg }}>
+                <div style={{ fontSize: '12px', color: curLv.color, fontWeight: '600', marginBottom: '4px' }}>체감온도 (열지수)</div>
+                <div style={{ fontSize: '48px', fontWeight: '800', color: curLv.color, lineHeight: 1.05, marginBottom: '10px' }}>{curHI}°C</div>
+                <div style={{ display: 'inline-block', background: curLv.color, color: '#fff', padding: '4px 14px', borderRadius: '5px', fontSize: '14px', fontWeight: '700', marginBottom: '10px' }}>{curLv.level}</div>
+                <div style={{ fontSize: '13px', color: curLv.color, fontWeight: '600', marginBottom: '12px' }}>→ {curLv.action}</div>
                 <div style={{ borderTop: `1px solid ${curLv.border}`, paddingTop: '10px', fontSize: '11px', color: '#6b7280' }}>
                   기온 {curT}°C · 습도 {curH}% · 기상청 Rothfusz 열지수 공식
                 </div>
               </div>
             )}
 
-            {/* 안내 (촬영 전) */}
             {!extracted && !analyzing && (
               <div style={{ border: '1px solid #e5e7eb', borderRadius: '10px', padding: '20px', background: '#f9fafb', marginBottom: '16px' }}>
                 <div style={{ fontSize: '13px', fontWeight: '600', color: '#374151', marginBottom: '12px' }}>사용 방법</div>
@@ -541,29 +519,21 @@ export default function HeatStressPage() {
               </div>
             )}
 
-            {/* 메모 */}
             <div style={{ marginBottom: '16px' }}>
               <label style={{ fontSize: '13px', fontWeight: '600', color: '#374151', display: 'block', marginBottom: '6px' }}>메모</label>
               <textarea
                 value={memo} onChange={e => setMemo(e.target.value)} rows={3}
                 placeholder="특이사항, 작업자 상태, 조치 내용 등..."
-                style={{
-                  width: '100%', padding: '10px 12px',
-                  border: '1px solid #d1d5db', borderRadius: '7px',
-                  fontSize: '13px', resize: 'vertical', outline: 'none',
-                  boxSizing: 'border-box', color: '#374151', lineHeight: 1.5,
-                }}
+                style={{ width: '100%', padding: '10px 12px', border: '1px solid #d1d5db', borderRadius: '7px', fontSize: '13px', resize: 'vertical', outline: 'none', boxSizing: 'border-box', color: '#374151', lineHeight: 1.5 }}
               />
             </div>
 
-            {/* 오류 메시지 */}
             {err && (
               <div style={{ padding: '10px 14px', background: '#fef2f2', border: '1px solid #fecaca', borderRadius: '7px', color: '#dc2626', fontSize: '13px', marginBottom: '12px', lineHeight: 1.5 }}>
                 ⚠ {err}
               </div>
             )}
 
-            {/* 저장 버튼 */}
             <button
               onClick={handleSave}
               disabled={!extracted || analyzing}
@@ -588,123 +558,89 @@ export default function HeatStressPage() {
       ══════════════════════════════════════════ */}
       {tab === 'history' && (
         <div>
-          {/* 요약 카드 */}
-          {records.length > 0 && (
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '12px', marginBottom: '20px' }}>
-              {[
-                { label: '총 측정 횟수',   value: `${records.length}회`,        sub: '누적',         warn: false },
-                { label: '오늘 측정',       value: `${todayRecs.length}회`,      sub: todayStr,       warn: false },
-                { label: '위험 단계 건수',  value: `${dangerRecs.length}건`,     sub: '위험+매우위험', warn: dangerRecs.length > 0 },
-                { label: '최근 체감온도',   value: `${records[0].heatIdx}°C`,   sub: records[0].level, warn: records[0].level === '위험' || records[0].level === '매우위험' },
-              ].map(c => (
-                <div key={c.label} style={{
-                  border: `1px solid ${c.warn ? '#fecaca' : '#e5e7eb'}`,
-                  borderRadius: '8px', padding: '14px 16px',
-                  background: c.warn ? '#fef2f2' : '#fff',
-                }}>
-                  <div style={{ fontSize: '11px', color: '#9ca3af', marginBottom: '4px' }}>{c.label}</div>
-                  <div style={{ fontSize: '24px', fontWeight: '700', color: c.warn ? '#dc2626' : '#111827', lineHeight: 1.2 }}>{c.value}</div>
-                  <div style={{ fontSize: '11px', color: '#9ca3af', marginTop: '2px' }}>{c.sub}</div>
-                </div>
-              ))}
-            </div>
-          )}
-
-          {/* 도구 바 */}
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
-            <div style={{ fontSize: '14px', fontWeight: '600', color: '#374151' }}>
-              측정 기록 ({records.length}건)
-            </div>
-            <div style={{ display: 'flex', gap: '8px' }}>
-              <button
-                onClick={exportCSV} disabled={records.length === 0}
-                style={{
-                  padding: '6px 14px', border: '1px solid #e5e7eb', borderRadius: '6px',
-                  background: '#fff', color: records.length === 0 ? '#9ca3af' : '#374151',
-                  cursor: records.length === 0 ? 'not-allowed' : 'pointer', fontSize: '13px',
-                }}
-              >
-                CSV 내보내기
-              </button>
-            </div>
-          </div>
-
-          {/* 기록 없음 */}
-          {records.length === 0 ? (
-            <div style={{ textAlign: 'center', padding: '60px', border: '1px solid #e5e7eb', borderRadius: '12px' }}>
-              <div style={{ fontSize: '32px', marginBottom: '10px' }}>📋</div>
-              <div style={{ fontSize: '15px', fontWeight: '600', color: '#374151', marginBottom: '6px' }}>기록이 없습니다</div>
-              <div style={{ fontSize: '13px', color: '#9ca3af' }}>측정 기록 탭에서 온습도계 사진을 촬영해보세요.</div>
+          {loading ? (
+            <div style={{ textAlign: 'center', padding: '60px', color: '#6b7280', fontSize: '14px' }}>
+              불러오는 중...
             </div>
           ) : (
-            /* 기록 테이블 */
-            <div style={{ border: '1px solid #e5e7eb', borderRadius: '10px', overflow: 'hidden' }}>
-              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
-                <thead>
-                  <tr style={{ background: '#f9fafb', borderBottom: '1px solid #e5e7eb' }}>
-                    {[
-                      { h: '날짜',       a: 'left'   },
-                      { h: '시간',       a: 'left'   },
-                      { h: '위치',       a: 'left'   },
-                      { h: '기온',       a: 'center' },
-                      { h: '습도',       a: 'center' },
-                      { h: '체감온도',   a: 'center' },
-                      { h: '단계',       a: 'center' },
-                      { h: '메모',       a: 'left'   },
-                      { h: '',           a: 'center' },
-                    ].map(({ h, a }) => (
-                      <th key={h} style={{ padding: '10px 12px', textAlign: a as any, fontSize: '12px', color: '#6b7280', fontWeight: '600' }}>{h}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {records.map((r, i) => {
-                    const lv = getLevel(r.heatIdx);
-                    return (
-                      <tr key={r.id} style={{ borderBottom: i < records.length - 1 ? '1px solid #f3f4f6' : 'none', background: i % 2 ? '#fafafa' : '#fff' }}>
-                        <td style={{ padding: '10px 12px', color: '#374151', whiteSpace: 'nowrap' }}>{r.date}</td>
-                        <td style={{ padding: '10px 12px', color: '#6b7280', whiteSpace: 'nowrap' }}>{r.time}</td>
-                        <td style={{ padding: '10px 12px', color: '#374151', maxWidth: '140px' }}>
-                          <div style={{ fontWeight: '500' }}>{r.location}</div>
-                          {r.lat && (
-                            <div style={{ fontSize: '11px', color: '#9ca3af' }}>
-                              {r.lat.toFixed(4)}, {r.lng?.toFixed(4)}
-                            </div>
-                          )}
-                        </td>
-                        <td style={{ padding: '10px 12px', textAlign: 'center', fontWeight: '600', color: '#374151' }}>{r.temp}°C</td>
-                        <td style={{ padding: '10px 12px', textAlign: 'center', color: '#6b7280' }}>{r.hum}%</td>
-                        <td style={{ padding: '10px 12px', textAlign: 'center', fontWeight: '800', fontSize: '15px', color: lv.color }}>{r.heatIdx}°C</td>
-                        <td style={{ padding: '10px 12px', textAlign: 'center' }}>
-                          <span style={{ background: lv.bg, color: lv.color, padding: '3px 9px', borderRadius: '4px', fontSize: '12px', fontWeight: '700', border: `1px solid ${lv.border}`, whiteSpace: 'nowrap' }}>
-                            {r.level}
-                          </span>
-                        </td>
-                        <td style={{ padding: '10px 12px', color: '#6b7280', maxWidth: '140px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                          {r.memo || '-'}
-                        </td>
-                        <td style={{ padding: '10px 12px', textAlign: 'center' }}>
-                          <button
-                            onClick={() => deleteRecord(r.id)}
-                            style={{ padding: '3px 9px', border: '1px solid #fecaca', borderRadius: '4px', background: '#fff', color: '#dc2626', cursor: 'pointer', fontSize: '11px' }}
-                          >
-                            삭제
-                          </button>
-                        </td>
+            <>
+              {records.length > 0 && (
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '12px', marginBottom: '20px' }}>
+                  {[
+                    { label: '총 측정 횟수',  value: `${records.length}회`,      sub: '누적',          warn: false },
+                    { label: '오늘 측정',      value: `${todayRecs.length}회`,    sub: todayStr,        warn: false },
+                    { label: '위험 단계 건수', value: `${dangerRecs.length}건`,   sub: '위험+매우위험', warn: dangerRecs.length > 0 },
+                    { label: '최근 체감온도',  value: `${records[0].heatIdx}°C`, sub: records[0].level, warn: records[0].level === '위험' || records[0].level === '매우위험' },
+                  ].map(c => (
+                    <div key={c.label} style={{ border: `1px solid ${c.warn ? '#fecaca' : '#e5e7eb'}`, borderRadius: '8px', padding: '14px 16px', background: c.warn ? '#fef2f2' : '#fff' }}>
+                      <div style={{ fontSize: '11px', color: '#9ca3af', marginBottom: '4px' }}>{c.label}</div>
+                      <div style={{ fontSize: '24px', fontWeight: '700', color: c.warn ? '#dc2626' : '#111827', lineHeight: 1.2 }}>{c.value}</div>
+                      <div style={{ fontSize: '11px', color: '#9ca3af', marginTop: '2px' }}>{c.sub}</div>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+                <div style={{ fontSize: '14px', fontWeight: '600', color: '#374151' }}>측정 기록 ({records.length}건)</div>
+                <button
+                  onClick={exportCSV} disabled={records.length === 0}
+                  style={{ padding: '6px 14px', border: '1px solid #e5e7eb', borderRadius: '6px', background: '#fff', color: records.length === 0 ? '#9ca3af' : '#374151', cursor: records.length === 0 ? 'not-allowed' : 'pointer', fontSize: '13px' }}
+                >
+                  CSV 내보내기
+                </button>
+              </div>
+
+              {records.length === 0 ? (
+                <div style={{ textAlign: 'center', padding: '60px', border: '1px solid #e5e7eb', borderRadius: '12px' }}>
+                  <div style={{ fontSize: '32px', marginBottom: '10px' }}>📋</div>
+                  <div style={{ fontSize: '15px', fontWeight: '600', color: '#374151', marginBottom: '6px' }}>기록이 없습니다</div>
+                  <div style={{ fontSize: '13px', color: '#9ca3af' }}>측정 기록 탭에서 온습도계 사진을 촬영해보세요.</div>
+                </div>
+              ) : (
+                <div style={{ border: '1px solid #e5e7eb', borderRadius: '10px', overflow: 'hidden' }}>
+                  <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
+                    <thead>
+                      <tr style={{ background: '#f9fafb', borderBottom: '1px solid #e5e7eb' }}>
+                        {['날짜','시간','위치','기온','습도','체감온도','단계','메모',''].map((h, i) => (
+                          <th key={i} style={{ padding: '10px 12px', textAlign: ['기온','습도','체감온도','단계'].includes(h) ? 'center' : 'left' as any, fontSize: '12px', color: '#6b7280', fontWeight: '600' }}>{h}</th>
+                        ))}
                       </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
+                    </thead>
+                    <tbody>
+                      {records.map((r, i) => {
+                        const lv = getLevel(r.heatIdx);
+                        return (
+                          <tr key={r.id} style={{ borderBottom: i < records.length - 1 ? '1px solid #f3f4f6' : 'none', background: i % 2 ? '#fafafa' : '#fff' }}>
+                            <td style={{ padding: '10px 12px', color: '#374151', whiteSpace: 'nowrap' }}>{r.date}</td>
+                            <td style={{ padding: '10px 12px', color: '#6b7280', whiteSpace: 'nowrap' }}>{r.time}</td>
+                            <td style={{ padding: '10px 12px', color: '#374151', maxWidth: '140px' }}>
+                              <div style={{ fontWeight: '500' }}>{r.location}</div>
+                              {r.lat && <div style={{ fontSize: '11px', color: '#9ca3af' }}>{r.lat.toFixed(4)}, {r.lng?.toFixed(4)}</div>}
+                            </td>
+                            <td style={{ padding: '10px 12px', textAlign: 'center', fontWeight: '600', color: '#374151' }}>{r.temp}°C</td>
+                            <td style={{ padding: '10px 12px', textAlign: 'center', color: '#6b7280' }}>{r.hum}%</td>
+                            <td style={{ padding: '10px 12px', textAlign: 'center', fontWeight: '800', fontSize: '15px', color: lv.color }}>{r.heatIdx}°C</td>
+                            <td style={{ padding: '10px 12px', textAlign: 'center' }}>
+                              <span style={{ background: lv.bg, color: lv.color, padding: '3px 9px', borderRadius: '4px', fontSize: '12px', fontWeight: '700', border: `1px solid ${lv.border}`, whiteSpace: 'nowrap' }}>{r.level}</span>
+                            </td>
+                            <td style={{ padding: '10px 12px', color: '#6b7280', maxWidth: '140px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.memo || '-'}</td>
+                            <td style={{ padding: '10px 12px', textAlign: 'center' }}>
+                              <button onClick={() => deleteRecord(r.id)} style={{ padding: '3px 9px', border: '1px solid #fecaca', borderRadius: '4px', background: '#fff', color: '#dc2626', cursor: 'pointer', fontSize: '11px' }}>삭제</button>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </>
           )}
         </div>
       )}
 
-      {/* CSS 애니메이션 */}
-      <style>{`
-        @keyframes heatSpin { to { transform: rotate(360deg); } }
-      `}</style>
+      <style>{`@keyframes heatSpin { to { transform: rotate(360deg); } }`}</style>
     </div>
   );
 }
